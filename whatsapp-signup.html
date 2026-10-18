@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Connect WhatsApp – Miami Beach Resort</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef4f5;
+    --ink: #10282e;
+    --muted: #4d6469;
+    --sea: #0b6b78;
+    --sea-ink: #ffffff;
+    --line: #c5d6d9;
+    --ok: #17703f;
+    --err: #a93a22;
+    --panel: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1c20;
+      --ink: #e6f0f1;
+      --muted: #96b0b5;
+      --sea: #3fb6c4;
+      --sea-ink: #07191d;
+      --line: #27424a;
+      --ok: #5fd08e;
+      --err: #ff9a85;
+      --panel: #132a30;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.55;
+    padding: 56px 24px 72px;
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  h1 {
+    font-size: 2rem;
+    line-height: 1.15;
+    font-weight: 700;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .place { color: var(--muted); margin: 0 0 36px; }
+  h2 { font-size: 1.05rem; font-weight: 700; margin: 0 0 12px; }
+  ol { margin: 0 0 36px; padding: 0 0 0 1.25em; }
+  li { margin: 0 0 10px; padding-left: 4px; }
+  li::marker { color: var(--sea); font-weight: 700; }
+  .number { font-weight: 700; white-space: nowrap; }
+  button {
+    font: inherit;
+    font-weight: 700;
+    background: var(--sea);
+    color: var(--sea-ink);
+    border: 0;
+    border-radius: 6px;
+    padding: 14px 24px;
+    cursor: pointer;
+    min-height: 48px;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  #status {
+    margin-top: 24px;
+    padding: 14px 16px;
+    border-left: 4px solid var(--line);
+    background: var(--panel);
+    min-height: 1.5em;
+    display: none;
+  }
+  #status.show { display: block; }
+  #status.working { border-left-color: var(--sea); }
+  #status.ok { border-left-color: var(--ok); }
+  #status.error { border-left-color: var(--err); }
+  #status strong { display: block; margin-bottom: 2px; }
+  #status.ok strong { color: var(--ok); }
+  #status.error strong { color: var(--err); }
+  .fine { margin-top: 36px; font-size: 0.9rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Connect the resort’s WhatsApp number</h1>
+  <p class="place">Miami Beach Resort, Cox’s Bazar</p>
+
+  <h2>Before you start</h2>
+  <ol>
+    <li>Keep the phone with the WhatsApp Business app for <span class="number">+880 1616 472282</span> next to you, with the app updated.</li>
+    <li>Log in with the Facebook account that manages the Miami Beach Resort business.</li>
+    <li>Choose “Connect your existing WhatsApp Business app”, then scan the QR code with that phone.</li>
+    <li>When asked, agree to share chat history.</li>
+    <li>Leave the app open on the phone until this page says Connected.</li>
+  </ol>
+
+  <button id="connect" type="button" disabled>Connect WhatsApp number</button>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <p class="fine">Do not close this page while it says “Connecting”.</p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ===== Settings =====
+  var APP_ID = "1108649051746702";
+  var CONFIG_ID = "1377531174370863";
+  var GRAPH_VERSION = "v26.0";
+  var RECEIVER_URL = "https://n8n.scalewithaibd.com/webhook/whatsapp-signup";
+  var FINISH_EVENT = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+  var WAIT_FOR_EVENT_MS = 8000;   // the setup code expires after 30 seconds, so do not wait long
+  var POST_TIMEOUT_MS = 90000;    // the receiver also runs the contact and history sync
+  // ====================
+
+  var btn = document.getElementById("connect");
+  var box = document.getElementById("status");
+  var session = null;   // data from the Meta signup event
+  var code = null;      // one-time code from FB.login
+  var sent = false;
+  var waitTimer = null;
+
+  function show(kind, title, text) {
+    box.className = "show " + kind;
+    box.textContent = "";
+    var s = document.createElement("strong");
+    s.textContent = title;
+    box.appendChild(s);
+    if (text) box.appendChild(document.createTextNode(text));
+  }
+
+  function resetRun() {
+    session = null;
+    code = null;
+    sent = false;
+    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
+  }
+
+  function fail(title, text) {
+    resetRun();
+    btn.disabled = false;
+    show("error", title, text);
+  }
+
+  window.fbAsyncInit = function () {
+    FB.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: false, version: GRAPH_VERSION });
+    btn.disabled = false;
+  };
+
+  window.addEventListener("message", function (event) {
+    if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") return;
+    var data;
+    try { data = JSON.parse(event.data); } catch (e) { return; }
+    if (!data || data.type !== "WA_EMBEDDED_SIGNUP") return;
+    var d = data.data || {};
+    if (data.event === FINISH_EVENT) {
+      session = {
+        event: data.event,
+        waba_id: d.waba_id ? String(d.waba_id) : "",
+        phone_number_id: d.phone_number_id ? String(d.phone_number_id) : "",
+        business_id: d.business_id ? String(d.business_id) : ""
+      };
+      maybeSend();
+    } else if (data.event === "CANCEL") {
+      fail("Setup was cancelled", d.current_step ? "It stopped at: " + d.current_step + ". Press the button to start again." : "Press the button to start again.");
+    } else if (data.event === "ERROR" || d.error_message) {
+      fail("Meta reported an error", (d.error_message || "Press the button to try again.") + "");
+    } else if (!session) {
+      // Another flow event (for example the normal “FINISH”): this is not the Business app flow.
+      session = { event: String(data.event || "unknown"), waba_id: "", phone_number_id: "", business_id: "" };
+    }
+  });
+
+  function maybeSend() {
+    if (sent || !code || !session || session.event !== FINISH_EVENT) return;
+    sent = true;
+    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
+    show("working", "Connecting…", "Setting up the number and syncing contacts. This can take up to a minute.");
+
+    var payload = {
+      code: code,
+      waba_id: session.waba_id,
+      phone_number_id: session.phone_number_id,
+      business_id: session.business_id,
+      event: session.event
+    };
+    code = null;
+
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, POST_TIMEOUT_MS);
+    fetch(RECEIVER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal
+    })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (body) { return { res: res, body: body }; });
+      })
+      .then(function (r) {
+        clearTimeout(t);
+        if (r.res.ok && r.body && r.body.ok) {
+          resetRun();
+          show("ok", "Connected", r.body.message || "Keep WhatsApp Business open on the phone while contacts and chats sync.");
+        } else {
+          fail("Not connected", (r.body && r.body.message) ? r.body.message : "The server could not finish the setup. The team has been alerted.");
+        }
+      })
+      .catch(function () {
+        clearTimeout(t);
+        fail("No answer from the server", "Check your internet connection, then start again. If it keeps failing, tell the team.");
+      });
+  }
+
+  btn.addEventListener("click", function () {
+    if (typeof FB === "undefined") {
+      show("error", "Facebook did not load", "Disable ad blockers for this page and reload.");
+      return;
+    }
+    resetRun();
+    btn.disabled = true;
+    show("working", "Connecting…", "Follow the steps in the Facebook window.");
+
+    FB.login(function (response) {
+      var c = response && response.authResponse && response.authResponse.code;
+      if (!c) {
+        fail("Login was cancelled", "Press the button to start again.");
+        return;
+      }
+      code = c;
+      maybeSend();
+      if (!sent) {
+        waitTimer = setTimeout(function () {
+          if (!sent) {
+            fail("Setup was not confirmed", "Meta did not confirm the WhatsApp Business app connection. Press the button and choose “Connect your existing WhatsApp Business app”.");
+          }
+        }, WAIT_FOR_EVENT_MS);
+      }
+    }, {
+      config_id: CONFIG_ID,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: {
+        setup: {},
+        featureType: "whatsapp_business_app_onboarding",
+        sessionInfoVersion: "3"
+      }
+    });
+  });
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+</body>
+</html>
